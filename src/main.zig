@@ -274,7 +274,7 @@ fn gui(init: std.process.Init, cli: CliOptions) !void {
     const working_directory = try resolveWorkingDirectory(arena, init.minimal.environ, config.working_directory);
 
     const command = try buildCommand(arena, config, init.minimal.environ, cli.command_mode, cli.command, working_directory);
-    const envp = try buildEnvp(init.io, arena, init.minimal.environ);
+    const envp = try buildEnvp(init.io, arena, init.minimal.environ, working_directory);
 
     const app = try App.init(
         init.io,
@@ -385,11 +385,13 @@ fn validateWorkingDirectory(path: [:0]const u8) !void {
         return error.InvalidCli;
 }
 
-/// Build an envp block for the child with Monstar's terminal definition.
+/// Build the child's environment with Monstar's terminal definition and PWD
+/// matching the resolved working-directory override, if any.
 fn buildEnvp(
     io: std.Io,
     arena: std.mem.Allocator,
     environ: std.process.Environ,
+    cwd: ?[:0]const u8,
 ) ![*:null]const ?[*:0]const u8 {
     var list: std.ArrayList(?[*:0]const u8) = .empty;
     var has_terminfo = false;
@@ -398,11 +400,13 @@ fn buildEnvp(
         const value = std.mem.span(e);
         if (std.mem.startsWith(u8, value, "TERM=")) continue;
         if (std.mem.startsWith(u8, value, "COLORTERM=")) continue;
+        if (cwd != null and std.mem.startsWith(u8, value, "PWD=")) continue;
         // The launcher token belongs to our window, not the shell or its children.
         if (std.mem.startsWith(u8, value, "XDG_ACTIVATION_TOKEN=")) continue;
         if (std.mem.startsWith(u8, value, "TERMINFO=")) has_terminfo = true;
         try list.append(arena, e);
     }
+    if (cwd) |path| try list.append(arena, try std.mem.joinZ(arena, "", &.{ "PWD=", path }));
     try list.append(arena, "TERM=monstar");
     try list.append(arena, "COLORTERM=truecolor");
     if (!has_terminfo) {
@@ -430,7 +434,7 @@ test "shell environment excludes the launch activation token" {
         "KEEP=value",
     };
     const environ: std.process.Environ = .{ .block = .{ .slice = &envp } };
-    const child = try buildEnvp(std.testing.io, arena_state.allocator(), environ);
+    const child = try buildEnvp(std.testing.io, arena_state.allocator(), environ, null);
     const expected = [_][]const u8{
         "TERMINFO=/custom/terminfo",
         "KEEP=value",
@@ -443,6 +447,32 @@ test "shell environment excludes the launch activation token" {
         try std.testing.expectEqualStrings(want, std.mem.span(entry.?));
     }
     try std.testing.expectEqualStrings("launcher-token", environ.getPosix("XDG_ACTIVATION_TOKEN").?);
+}
+
+test "child environment updates PWD only when changing working directory" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const inherited = [_:null]?[*:0]const u8{ "PWD=/launcher", "PWD_EXTRA=keep" };
+    for ([_]std.process.Environ{ .{ .block = .{ .slice = &inherited } }, .empty }) |environ| {
+        for ([_]?[:0]const u8{ null, "/tmp/monstar project" }) |cwd| {
+            const envp = try buildEnvp(std.testing.io, arena_state.allocator(), environ, cwd);
+            const child: std.process.Environ = .{ .block = .{ .slice = std.mem.span(envp) } };
+            const expected = cwd orelse environ.getPosix("PWD");
+            if (expected) |path| {
+                try std.testing.expectEqualStrings(path, child.getPosix("PWD") orelse "<missing>");
+            } else {
+                try std.testing.expectEqual(null, child.getPosix("PWD"));
+            }
+            var pwd_count: usize = 0;
+            for (child.block.slice) |entry| {
+                if (std.mem.startsWith(u8, std.mem.span(entry.?), "PWD=")) pwd_count += 1;
+            }
+            try std.testing.expectEqual(@as(usize, @intFromBool(expected != null)), pwd_count);
+            if (environ.getPosix("PWD_EXTRA")) |value| {
+                try std.testing.expectEqualStrings(value, child.getPosix("PWD_EXTRA").?);
+            }
+        }
+    }
 }
 
 test {
