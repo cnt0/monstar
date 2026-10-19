@@ -1389,7 +1389,7 @@ fn openUriPortal(self: *App, uri: []const u8, activation_token: ?[:0]const u8) !
     const kind: PendingDbus.Kind = .{ .open_uri = .{ .uri = owned_uri, .token = owned_token } };
 
     // The portal's OpenURI method rejects file:// URIs by design; local
-    // paths go through the fd-passing OpenFile/OpenDirectory methods.
+    // paths go through the fd-passing OpenFile method.
     var arena_state: std.heap.ArenaAllocator = .init(self.alloc);
     defer arena_state.deinit();
     if (try clipboard_format.osc7Path(arena_state.allocator(), uri)) |path| {
@@ -1417,24 +1417,14 @@ fn openFilePortal(
 ) !void {
     const linux = std.os.linux;
 
-    // Directory-ness decides the portal method; O_DIRECTORY fails with
-    // ENOTDIR on regular files. NONBLOCK guards against FIFOs blocking
-    // the event loop (a no-op for regular files).
-    var is_dir = true;
-    var rc = linux.openat(linux.AT.FDCWD, path, .{
+    // OpenFile opens both files and directories. OpenDirectory instead
+    // reveals the target in its parent. NONBLOCK keeps FIFOs from blocking
+    // the event loop (a no-op for regular files and directories).
+    const rc = linux.openat(linux.AT.FDCWD, path, .{
         .ACCMODE = .RDONLY,
         .CLOEXEC = true,
-        .DIRECTORY = true,
         .NONBLOCK = true,
     }, 0);
-    if (linux.errno(rc) == .NOTDIR) {
-        is_dir = false;
-        rc = linux.openat(linux.AT.FDCWD, path, .{
-            .ACCMODE = .RDONLY,
-            .CLOEXEC = true,
-            .NONBLOCK = true,
-        }, 0);
-    }
     if (linux.errno(rc) != .SUCCESS) return error.OpenFailed;
     const fd: posix.fd_t = @intCast(rc);
     // The connection duplicates the descriptor before returning.
@@ -1450,11 +1440,75 @@ fn openFilePortal(
 
     try self.sendPortalCall(
         kind,
-        if (is_dir) "OpenDirectory" else "OpenFile",
+        "OpenFile",
         "sha{sv}",
         encoded.bytes(),
         &.{fd},
     );
+}
+
+test "local file and directory links open the target rather than reveal its parent" {
+    if (!build_options.enable_dbus) return error.SkipZigTest;
+    const alloc = std.testing.allocator;
+    const io = std.testing.io;
+    const linux = std.os.linux;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    try tmp.dir.writeFile(io, .{ .sub_path = "file", .data = "content" });
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const path_len = try tmp.dir.realPath(io, &path_buf);
+
+    const app = try alloc.create(App);
+    defer alloc.destroy(app);
+    var sockets: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(.SUCCESS, linux.errno(linux.socketpair(
+        linux.AF.UNIX,
+        linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK,
+        0,
+        &sockets,
+    )));
+    app.alloc = alloc;
+    app.io = io;
+    app.dbus = .{ .allocator = alloc, .io = io, .fd = sockets[0], .unix_fd_enabled = true };
+    defer app.dbus.?.deinit();
+    app.pending_dbus = .empty;
+    defer {
+        for (app.pending_dbus.items) |pending| pending.kind.deinit(alloc);
+        app.pending_dbus.deinit(alloc);
+    }
+    var peer: DbusConnection = .{ .allocator = alloc, .io = io, .fd = sockets[1] };
+    defer peer.deinit();
+
+    for ([_][]const u8{ "/file", "" }) |suffix| {
+        const path = try std.fmt.allocPrint(alloc, "{s}{s}", .{ path_buf[0..path_len], suffix });
+        defer alloc.free(path);
+        const uri = try std.fmt.allocPrint(alloc, "file://{s}", .{path});
+        defer alloc.free(uri);
+        try app.openUriPortal(uri, "activation-token");
+
+        var message = (try peer.nextMessage()) orelse return error.TestExpectedMessage;
+        defer message.deinit();
+        try std.testing.expectEqualStrings("OpenFile", message.header.member.?);
+        try std.testing.expectEqualStrings("sha{sv}", message.bodySignature());
+        try std.testing.expectEqual(@as(usize, 1), message.fds.len);
+        var fd_path_buf: [64]u8 = undefined;
+        const fd_path = try std.fmt.bufPrintZ(&fd_path_buf, "/proc/self/fd/{d}", .{message.fds[0]});
+        var target: [std.fs.max_path_bytes]u8 = undefined;
+        const n = linux.readlinkat(linux.AT.FDCWD, fd_path, &target, target.len);
+        try std.testing.expectEqual(.SUCCESS, linux.errno(n));
+        try std.testing.expectEqualStrings(path, target[0..n]);
+
+        var decoder = message.bodyDecoder();
+        try std.testing.expectEqualStrings("", try decoder.string());
+        try std.testing.expectEqual(@as(u32, 0), try decoder.uint32());
+        const options_end = try decoder.beginArray(8);
+        try decoder.structAlignment();
+        try std.testing.expectEqualStrings("activation_token", try decoder.string());
+        try std.testing.expectEqualStrings("s", try decoder.variantSignature());
+        try std.testing.expectEqualStrings("activation-token", try decoder.string());
+        try decoder.endArray(options_end);
+        try decoder.end();
+    }
 }
 
 /// Takes ownership of kind on success; the eventual reply decides fallback.
