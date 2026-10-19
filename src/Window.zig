@@ -1186,7 +1186,12 @@ fn removeSeat(self: *Window) void {
     if (self.primary_device) |device| device.destroy();
     self.primary_device = null;
     self.notifyClipboardDevices();
-    if (self.text_input) |text_input| text_input.destroy();
+    if (self.text_input) |text_input| {
+        // No compositor leave is guaranteed before global removal. Discard
+        // the application's preedit and pending commit with the old seat.
+        textInputListener(text_input, .{ .leave = .{ .surface = self.surface } }, self);
+        text_input.destroy();
+    }
     self.text_input = null;
     self.text_input_enabled = false;
     self.text_input_rect = null;
@@ -1341,6 +1346,78 @@ test "keyboard removal notifies the application without a compositor leave" {
         }
         try std.testing.expect(window.keyboard == null);
         try std.testing.expectEqual(@as(usize, 1), observer.removals);
+    }
+}
+
+test "seat removal ends text input focus without a compositor leave" {
+    const linux = std.os.linux;
+    const Observer = struct {
+        window: *Window,
+        left_surface: ?*wl.Surface = null,
+
+        fn textInput(ctx: *anyopaque, event: zwp.TextInputV3.Event) void {
+            const observer: *@This() = @ptrCast(@alignCast(ctx));
+            switch (event) {
+                .leave => |leave| {
+                    observer.left_surface = leave.surface;
+                    // The application normally disables text input on leave.
+                    observer.window.disableTextInput();
+                },
+                else => {},
+            }
+        }
+    };
+    var fds: [2]std.posix.fd_t = undefined;
+    try std.testing.expectEqual(.SUCCESS, linux.errno(linux.socketpair(
+        linux.AF.UNIX,
+        linux.SOCK.STREAM | linux.SOCK.CLOEXEC | linux.SOCK.NONBLOCK,
+        0,
+        &fds,
+    )));
+    defer _ = linux.close(fds[1]);
+    const display = try wl.Display.connectToFd(fds[0]);
+    defer display.disconnect();
+    const registry = try display.getRegistry();
+    defer registry.destroy();
+    const compositor = try registry.bind(1, wl.Compositor, 4);
+    defer compositor.destroy();
+    const surface = try compositor.createSurface();
+    defer surface.destroy();
+    const manager = try registry.bind(2, zwp.TextInputManagerV3, 1);
+    defer manager.destroy();
+    const seat = try registry.bind(3, wl.Seat, 5);
+    var window: Window = undefined;
+    var globals: Globals = .{ .alloc = std.testing.allocator, .window = &window, .seat = seat, .seat_name = 3 };
+    registry.setListener(*Globals, registryListener, &globals);
+    var observer: Observer = .{ .window = &window };
+    window.display = display;
+    window.surface = surface;
+    window.seat = seat;
+    window.keyboard = null;
+    window.pointer = null;
+    window.cursor_shape_device = null;
+    window.data_device = null;
+    window.primary_device = null;
+    window.clipboard_devices_fn = null;
+    window.text_input = try manager.getTextInput(seat);
+    window.text_input_enabled = true;
+    window.text_input_rect = .{ .x = 10, .y = 20, .width = 8, .height = 16 };
+    window.text_input_fn = Observer.textInput;
+    window.render_ctx = &observer;
+    window.running = true;
+    window.pending_scale_changed = false;
+    window.pending_draw = false;
+
+    // Real wl_registry.global_remove events: an unrelated global must leave
+    // input intact, and repeated removal must not touch a destroyed proxy.
+    for ([_]u32{ 4, 3, 3 }) |name| {
+        const removal = [_]u32{ registry.getId(), (12 << 16) | 1, name };
+        try std.testing.expectEqual(@as(usize, 12), linux.write(fds[1], std.mem.sliceAsBytes(&removal).ptr, 12));
+        try std.testing.expect(try window.dispatch());
+        try std.testing.expectEqual(if (name == 3) surface else null, observer.left_surface);
+        try std.testing.expectEqual(name != 3, window.text_input != null);
+        try std.testing.expectEqual(name != 3, window.text_input_enabled);
+        try std.testing.expectEqual(name != 3, window.text_input_rect != null);
     }
 }
 
