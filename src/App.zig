@@ -2439,7 +2439,7 @@ fn spawnPipeCommand(
 
         const writer_rc = linux.fork();
         if (linux.errno(writer_rc) == .SUCCESS and writer_rc == 0) {
-            writePipeCommandChild(output, fds[0], fds[1]);
+            writePipeCommandChild(output, fds[1]);
         }
 
         _ = linux.close(fds[0]);
@@ -2519,12 +2519,72 @@ test "pipe command preserves input and redirects output with closed inherited de
     }
 }
 
-fn writePipeCommandChild(output: []const u8, read_fd: posix.fd_t, write_fd: posix.fd_t) noreturn {
+fn writePipeCommandChild(output: []const u8, write_fd: posix.fd_t) noreturn {
     const linux = std.os.linux;
-    _ = linux.close(read_fd);
-    writeAllFd(write_fd, output);
-    _ = linux.close(write_fd);
+    // This child never execs, so CLOEXEC cannot release the terminal's PTY,
+    // Wayland socket, or other descriptors while a slow reader blocks it.
+    // Keep only the output pipe at fd 0 before starting the blocking write.
+    if (linux.errno(linux.dup2(write_fd, 0)) != .SUCCESS) linux.exit(126);
+    if (linux.errno(linux.close_range(1, std.math.maxInt(posix.fd_t), .{
+        .UNSHARE = false,
+        .CLOEXEC = false,
+    })) != .SUCCESS) linux.exit(126);
+    writeAllFd(0, output);
     linux.exit(0);
+}
+
+test "blocked pipe command writer releases inherited descriptors without losing output" {
+    const linux = std.os.linux;
+    var pipe: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(.SUCCESS, linux.errno(linux.pipe2(&pipe, .{ .CLOEXEC = true })));
+    defer _ = linux.close(pipe[0]);
+    defer _ = linux.close(pipe[1]);
+    // Ensure the writer cannot finish until this test starts reading.
+    const capacity = linux.fcntl(pipe[1], linux.F.SETPIPE_SZ, 4096);
+    try std.testing.expectEqual(.SUCCESS, linux.errno(capacity));
+    const output = try std.testing.allocator.alloc(u8, capacity * 4);
+    defer std.testing.allocator.free(output);
+    for (output, 0..) |*byte, i| byte.* = @truncate(i ^ (i >> 8));
+
+    var inherited: [2]posix.fd_t = undefined;
+    try std.testing.expectEqual(.SUCCESS, linux.errno(linux.pipe2(&inherited, .{ .CLOEXEC = true })));
+    defer _ = linux.close(inherited[0]);
+    var inherited_writer_open = true;
+    defer if (inherited_writer_open) {
+        _ = linux.close(inherited[1]);
+    };
+
+    const fork_rc = linux.fork();
+    try std.testing.expectEqual(.SUCCESS, linux.errno(fork_rc));
+    const pid: posix.pid_t = @intCast(fork_rc);
+    if (pid == 0) writePipeCommandChild(output, pipe[1]);
+    var reaped = false;
+    defer if (!reaped) {
+        _ = linux.kill(pid, linux.SIG.KILL);
+        _ = Pty.wait(pid) catch {};
+    };
+    _ = linux.close(inherited[1]);
+    inherited_writer_open = false;
+
+    // CLOEXEC alone cannot release this pipe: the writer never execs.
+    // EOF must arrive while the output pipe is still blocked, not at exit.
+    var polls = [_]posix.pollfd{.{ .fd = inherited[0], .events = posix.POLL.IN, .revents = 0 }};
+    try std.testing.expectEqual(@as(usize, 1), try posix.poll(&polls, 2000));
+    var buf: [4096]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try posix.read(inherited[0], &buf));
+
+    var offset: usize = 0;
+    while (offset < output.len) {
+        polls[0] = .{ .fd = pipe[0], .events = posix.POLL.IN, .revents = 0 };
+        try std.testing.expectEqual(@as(usize, 1), try posix.poll(&polls, 2000));
+        const n = try posix.read(pipe[0], &buf);
+        try std.testing.expect(n > 0 and n <= output.len - offset);
+        try std.testing.expectEqualSlices(u8, output[offset..][0..n], buf[0..n]);
+        offset += n;
+    }
+    const status = try Pty.wait(pid);
+    reaped = true;
+    try std.testing.expectEqual(@as(u32, 0), status);
 }
 
 fn writeAllFd(fd: posix.fd_t, data: []const u8) void {
