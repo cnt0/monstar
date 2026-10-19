@@ -641,8 +641,10 @@ fn evdevToKey(keycode: u32) vt.input.Key {
         81 => .numpad_3,
         82 => .numpad_0,
         83 => .numpad_decimal,
+        86 => .intl_backslash,
         87 => .f11,
         88 => .f12,
+        89 => .intl_ro,
         96 => .numpad_enter,
         97 => .control_right,
         98 => .numpad_divide,
@@ -659,6 +661,7 @@ fn evdevToKey(keycode: u32) vt.input.Key {
         110 => .insert,
         111 => .delete,
         119 => .pause,
+        124 => .intl_yen,
         125 => .meta_left,
         126 => .meta_right,
         127 => .context_menu,
@@ -767,6 +770,48 @@ test "configured Unicode and physical bindings on US and Dvorak keyboards" {
             try std.testing.expectEqual(null, keybind.getEvent(bindings.items, kb.translate(&buf, 36, .press).?));
             try keybind.put(&bindings, std.testing.allocator, "alt+KeyJ=scroll_page_lines:3");
             try std.testing.expectEqual(@as(i16, 3), keybind.getEvent(bindings.items, kb.translate(&buf, 36, .press).?).?.scroll_page_lines);
+        }
+    }
+}
+
+test "international writing keys keep distinct physical bindings and layout text" {
+    const keybind = @import("keybind.zig");
+    var bindings: std.ArrayList(keybind.Binding) = .empty;
+    defer bindings.deinit(std.testing.allocator);
+    try keybind.put(&bindings, std.testing.allocator, "IntlBackslash=scroll_page_lines:-2");
+    try keybind.put(&bindings, std.testing.allocator, "IntlRo=scroll_page_lines:3");
+    try keybind.put(&bindings, std.testing.allocator, "IntlYen=scroll_page_lines:5");
+    try keybind.put(&bindings, std.testing.allocator, "shift+IntlBackslash=scroll_page_lines:-2");
+    try keybind.put(&bindings, std.testing.allocator, "shift+IntlRo=scroll_page_lines:3");
+    try keybind.put(&bindings, std.testing.allocator, "shift+IntlYen=scroll_page_lines:5");
+
+    const cases = [_]struct { layout: [*:0]const u8, keycode: u32, lines: i16, text: [2][]const u8 }{
+        .{ .layout = "de", .keycode = 86, .lines = -2, .text = .{ "<", ">" } },
+        .{ .layout = "jp", .keycode = 89, .lines = 3, .text = .{ "\\", "_" } },
+        .{ .layout = "jp", .keycode = 124, .lines = 5, .text = .{ "\\", "|" } },
+    };
+    for (cases) |case| {
+        var kb = try testKeyboardWithLayout(case.layout, null);
+        defer kb.deinit();
+        var buf: [16]u8 = undefined;
+        for (case.text, 0..) |expected_text, shifted| {
+            if (shifted != 0) _ = c.xkb_state_update_key(kb.state.?, 42 + 8, c.XKB_KEY_DOWN);
+            for ([_]vt.input.KeyAction{ .press, .repeat, .release }) |action| {
+                const event = kb.translate(&buf, case.keycode, action).?;
+                try std.testing.expectEqualStrings(expected_text, event.utf8);
+                try std.testing.expectEqual(
+                    @as(?keybind.Action, .{ .scroll_page_lines = case.lines }),
+                    keybind.getEvent(bindings.items, event),
+                );
+                if (action != .release) {
+                    var out: [64]u8 = undefined;
+                    var writer: std.Io.Writer = .fixed(&out);
+                    try vt.input.encodeKey(&writer, event, .{});
+                    try std.testing.expectEqualStrings(expected_text, writer.buffered());
+                }
+            }
+            // The ordinary backslash position must not match an Intl binding.
+            try std.testing.expectEqual(null, keybind.getEvent(bindings.items, kb.translate(&buf, 43, .press).?));
         }
     }
 }
