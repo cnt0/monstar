@@ -345,6 +345,11 @@ fn freeOutgoingSlot(self: *const Clipboard) ?usize {
 }
 
 fn sendSelection(self: *Clipboard, text: []const u8, fd: posix.fd_t) void {
+    // No bytes means no POLLOUT interest; complete with EOF immediately.
+    if (text.len == 0) {
+        _ = std.os.linux.close(fd);
+        return;
+    }
     const slot = self.freeOutgoingSlot() orelse {
         _ = std.os.linux.close(fd);
         return;
@@ -1223,6 +1228,7 @@ test "selection source callbacks honor the requested text encoding" {
     var clipboard: Clipboard = .init(std.testing.allocator, null, null);
     defer clipboard.deinit();
     const cases = [_]struct { text: [:0]const u8, latin1: ?[]const u8 }{
+        .{ .text = "", .latin1 = "" },
         .{ .text = "café £ÿ\n", .latin1 = "caf\xe9 \xa3\xff\n" },
         .{ .text = "price: 5€", .latin1 = null },
     };
