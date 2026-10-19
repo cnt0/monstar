@@ -111,9 +111,14 @@ pub fn osc7Path(arena: std.mem.Allocator, url: []const u8) std.mem.Allocator.Err
     return try arena.dupeZ(u8, path);
 }
 
-/// Format a hyperlink for the clipboard, reducing local file URIs to paths.
+/// Format a hyperlink for the clipboard, reducing plain local file URIs to
+/// paths while preserving URIs with queries or fragments.
 /// The caller owns the returned text.
 pub fn formatLinkCopy(alloc: std.mem.Allocator, url: []const u8) ![:0]u8 {
+    // A filesystem path cannot retain a document anchor or query. Check the
+    // encoded URI so %3F and %23 in filenames still become literal path bytes.
+    if (std.mem.indexOfAny(u8, url, "?#") != null) return alloc.dupeZ(u8, url);
+
     var arena_state: std.heap.ArenaAllocator = .init(alloc);
     defer arena_state.deinit();
 
@@ -197,6 +202,21 @@ test "formatLinkCopy reduces local file URIs and preserves other links" {
     const local = try formatLinkCopy(std.testing.allocator, "file://localhost/home/tim/my%20dir");
     defer std.testing.allocator.free(local);
     try std.testing.expectEqualStrings("/home/tim/my dir", local);
+
+    for ([_][]const u8{
+        "file:///tmp/manual.pdf#page=12",
+        "file://localhost/tmp/report.html?view=print",
+        "file:///tmp/report.html?view=print#results",
+        "file:///tmp/report.html?",
+        "file:///tmp/report.html#",
+    }) |uri| {
+        const copied = try formatLinkCopy(std.testing.allocator, uri);
+        defer std.testing.allocator.free(copied);
+        try std.testing.expectEqualStrings(uri, copied);
+    }
+    const escaped = try formatLinkCopy(std.testing.allocator, "file:///tmp/a%3Fb%23c");
+    defer std.testing.allocator.free(escaped);
+    try std.testing.expectEqualStrings("/tmp/a?b#c", escaped);
 
     var name_buf: [posix.HOST_NAME_MAX]u8 = undefined;
     const hostname = try posix.gethostname(&name_buf);
