@@ -505,6 +505,14 @@ pub fn splitPosition(position: i64) struct { pixel: i32, phase: u6 } {
     return .{ .pixel = @intCast(@divFloor(position, 64)), .phase = @intCast(@mod(position, 64)) };
 }
 
+/// Scale a positive font-unit line thickness by a 16.16 FreeType `y_scale`
+/// to whole pixels. Rounds up, like ghostty, so fractional thicknesses on
+/// scaled outputs do not collapse to thinner lines than the text strokes.
+fn lineThickness(units: i64, y_scale: i64) u32 {
+    std.debug.assert(units > 0 and y_scale > 0);
+    return @intCast(std.math.divCeil(i64, units * y_scale, 1 << 22) catch unreachable);
+}
+
 const SpriteGlyphKey = struct {
     cp: u21,
     cell_span: u2,
@@ -927,10 +935,7 @@ pub fn initWithDiscovery(alloc: std.mem.Allocator, discovery_data: *Discovery) E
     const y_scale: i64 = ft_face.*.size.*.metrics.y_scale;
     const thickness: u32 = thickness: {
         const units: i64 = ft_face.*.underline_thickness;
-        if (units > 0) {
-            const scaled: i64 = @divTrunc(units * y_scale, 1 << 22);
-            if (scaled > 0) break :thickness @intCast(scaled);
-        }
+        if (units > 0) break :thickness lineThickness(units, y_scale);
         break :thickness @max(1, natural_height / 16);
     };
 
@@ -1693,6 +1698,15 @@ test "signed 26.6 positions floor at pixel boundaries" {
         try std.testing.expectEqual(pixel, actual.pixel);
         try std.testing.expectEqual(phase, actual.phase);
     }
+}
+
+test "line thickness rounds fractional pixels up" {
+    // 50/1000 em at 26px (1.3px), 40px (2px), and 12px (0.6px). y_scale is
+    // (ppem in 26.6) / units_per_em in 16.16 fixed point, as FreeType sets it.
+    const units_per_em = 1000;
+    try std.testing.expectEqual(@as(u32, 2), lineThickness(50, (26 << 22) / units_per_em));
+    try std.testing.expectEqual(@as(u32, 2), lineThickness(50, (40 << 22) / units_per_em));
+    try std.testing.expectEqual(@as(u32, 1), lineThickness(50, (12 << 22) / units_per_em));
 }
 
 test "phase cache and bearings match direct negative FreeType translation" {
