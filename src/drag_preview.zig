@@ -43,7 +43,7 @@ pub fn fromRgb(alloc: std.mem.Allocator, width: u32, height: u32, channels: u3, 
 pub const TextStyle = struct {
     font_family: [:0]const u8,
     font_size: Config.FontSize,
-    adjust_cell_height: ?Config.MetricModifier,
+    metric_adjustments: Config.MetricAdjustments,
     foreground: vt.color.RGB,
     background: vt.color.RGB,
 };
@@ -64,7 +64,7 @@ pub fn text(
     const ratio: f64 = if (scale_x == 0 or scale_y == 0) 1 else @as(f64, @floatFromInt(scale_x)) / @as(f64, @floatFromInt(scale_y));
     const size_px = Config.fontSizePixels(style.font_size, @as(u32, scale) * 120) * ratio;
     if (size_px > max_font_px) return error.TooLarge;
-    var font: Font = try .init(alloc, style.font_family, @max(1, size_px), style.adjust_cell_height);
+    var font: Font = try .init(alloc, style.font_family, @max(1, size_px), style.metric_adjustments);
     defer font.deinit(alloc);
 
     var codepoints: std.ArrayList(u21) = .empty;
@@ -145,7 +145,7 @@ test "text previews fit the buffer scale and honor background opacity" {
     const style: TextStyle = .{
         .font_family = "monospace",
         .font_size = .{ .pixels = 13 },
-        .adjust_cell_height = null,
+        .metric_adjustments = .{},
         .foreground = .{ .r = 255, .g = 255, .b = 255 },
         .background = .{ .r = 0, .g = 0, .b = 200 },
     };

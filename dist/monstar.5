@@ -189,6 +189,26 @@ The result is at least one pixel, and glyphs remain vertically centered.
 Pixel adjustments stay fixed while zooming or changing output scale;
 percentage adjustments follow the font metrics.
 By default no adjustment is applied.
+.TP
+.BI adjust-box-thickness " = pixels|percent%"
+.TQ
+.BI adjust-underline-thickness " = pixels|percent%"
+.TQ
+.BI adjust-strikethrough-thickness " = pixels|percent%"
+.TQ
+.BI adjust-overline-thickness " = pixels|percent%"
+.TQ
+.BI adjust-cursor-thickness " = pixels|percent%"
+Adjust the line thickness of box drawing and other built-in line sprites,
+underlines, strikethrough, overlines, or the bar, underline, and hollow
+cursors.
+All of them start from the font's underline thickness, rounded up to whole
+pixels.
+Values take the same form as
+.BR adjust-cell-height ,
+and the result is at least one pixel.
+Line positions are computed before the adjustment.
+By default no adjustment is applied.
 .SH WINDOW SETTINGS
 .TP
 .BI background-opacity " = opacity"

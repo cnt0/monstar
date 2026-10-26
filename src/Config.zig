@@ -64,8 +64,9 @@ pub const FontSize = union(enum) {
     }
 };
 
-/// Adjustment applied to a font's natural cell height. Absolute values are
-/// physical pixel deltas; percentages scale with the natural metrics.
+/// Adjustment applied to a font-derived metric. Absolute values are physical
+/// pixel deltas; percentages scale with the natural metrics. Results are at
+/// least one pixel.
 pub const MetricModifier = union(enum) {
     absolute: i32,
     percent: f64,
@@ -90,15 +91,26 @@ pub const MetricModifier = union(enum) {
     }
 };
 
+/// Adjustments to metrics derived from the primary font. Unset fields
+/// preserve the natural metrics. Line positions are computed from the
+/// natural thickness, before thickness adjustments.
+pub const MetricAdjustments = struct {
+    cell_height: ?MetricModifier = null,
+    box_thickness: ?MetricModifier = null,
+    underline_thickness: ?MetricModifier = null,
+    strikethrough_thickness: ?MetricModifier = null,
+    overline_thickness: ?MetricModifier = null,
+    /// Bar, underline, and hollow cursor strokes.
+    cursor_thickness: ?MetricModifier = null,
+};
+
 /// Wayland app-id and desktop-entry hint for desktop integration.
 app_id: [:0]const u8 = default_app_id,
 font_family: [:0]const u8 = "monospace",
 /// Bare and `pt` values are typographic points; `px` values are logical
 /// pixels. Both apply the output's fractional scale during rasterization.
 font_size: FontSize = .{ .points = 12 },
-/// Signed physical-pixel or percentage adjustment to the font's natural cell
-/// height. Unset preserves the natural metrics.
-adjust_cell_height: ?MetricModifier = null,
+metric_adjustments: MetricAdjustments = .{},
 /// Minimum window padding in logical pixels. One configured value applies to
 /// both sides; two values are left/right for X and top/bottom for Y.
 window_padding_x: WindowPadding = .{},
@@ -260,7 +272,17 @@ pub fn set(self: *Config, arena: std.mem.Allocator, key: []const u8, value: []co
     } else if (std.mem.eql(u8, key, "font-size")) {
         self.font_size = try parseFontSize(value);
     } else if (std.mem.eql(u8, key, "adjust-cell-height")) {
-        self.adjust_cell_height = try parseMetricModifier(value);
+        self.metric_adjustments.cell_height = try parseMetricModifier(value);
+    } else if (std.mem.eql(u8, key, "adjust-box-thickness")) {
+        self.metric_adjustments.box_thickness = try parseMetricModifier(value);
+    } else if (std.mem.eql(u8, key, "adjust-underline-thickness")) {
+        self.metric_adjustments.underline_thickness = try parseMetricModifier(value);
+    } else if (std.mem.eql(u8, key, "adjust-strikethrough-thickness")) {
+        self.metric_adjustments.strikethrough_thickness = try parseMetricModifier(value);
+    } else if (std.mem.eql(u8, key, "adjust-overline-thickness")) {
+        self.metric_adjustments.overline_thickness = try parseMetricModifier(value);
+    } else if (std.mem.eql(u8, key, "adjust-cursor-thickness")) {
+        self.metric_adjustments.cursor_thickness = try parseMetricModifier(value);
     } else if (std.mem.eql(u8, key, "window-padding-x")) {
         self.window_padding_x = try parseWindowPadding(value);
     } else if (std.mem.eql(u8, key, "window-padding-y")) {
@@ -997,28 +1019,45 @@ test "font size accepts bare points and explicit point or pixel units" {
 
 test "cell height adjustment accepts signed pixels and percentages" {
     var config: Config = .{};
-    try std.testing.expectEqual(@as(?MetricModifier, null), config.adjust_cell_height);
+    try std.testing.expectEqual(@as(?MetricModifier, null), config.metric_adjustments.cell_height);
 
     try config.set(std.testing.allocator, "adjust-cell-height", "2");
-    try std.testing.expectEqual(MetricModifier{ .absolute = 2 }, config.adjust_cell_height.?);
-    try std.testing.expectEqual(@as(u31, 22), config.adjust_cell_height.?.apply(20));
+    try std.testing.expectEqual(MetricModifier{ .absolute = 2 }, config.metric_adjustments.cell_height.?);
+    try std.testing.expectEqual(@as(u31, 22), config.metric_adjustments.cell_height.?.apply(20));
 
     try config.set(std.testing.allocator, "adjust-cell-height", "-2");
-    try std.testing.expectEqual(MetricModifier{ .absolute = -2 }, config.adjust_cell_height.?);
-    try std.testing.expectEqual(@as(u31, 18), config.adjust_cell_height.?.apply(20));
+    try std.testing.expectEqual(MetricModifier{ .absolute = -2 }, config.metric_adjustments.cell_height.?);
+    try std.testing.expectEqual(@as(u31, 18), config.metric_adjustments.cell_height.?.apply(20));
 
     try config.set(std.testing.allocator, "adjust-cell-height", "20%");
-    try std.testing.expectEqual(MetricModifier{ .percent = 20 }, config.adjust_cell_height.?);
-    try std.testing.expectEqual(@as(u31, 24), config.adjust_cell_height.?.apply(20));
+    try std.testing.expectEqual(MetricModifier{ .percent = 20 }, config.metric_adjustments.cell_height.?);
+    try std.testing.expectEqual(@as(u31, 24), config.metric_adjustments.cell_height.?.apply(20));
 
     try config.set(std.testing.allocator, "adjust-cell-height", "-150%");
-    try std.testing.expectEqual(@as(u31, 1), config.adjust_cell_height.?.apply(20));
+    try std.testing.expectEqual(@as(u31, 1), config.metric_adjustments.cell_height.?.apply(20));
     try std.testing.expectEqual(@as(u31, 1), (MetricModifier{ .absolute = -100 }).apply(20));
 
     try std.testing.expectError(error.InvalidValue, config.set(std.testing.allocator, "adjust-cell-height", "1.5"));
     try std.testing.expectError(error.InvalidValue, config.set(std.testing.allocator, "adjust-cell-height", "2px"));
     try std.testing.expectError(error.InvalidValue, config.set(std.testing.allocator, "adjust-cell-height", "nan%"));
     try std.testing.expectError(error.InvalidValue, config.set(std.testing.allocator, "adjust-cell-height", ""));
+}
+
+test "thickness adjustments set only their own metric" {
+    var config: Config = .{};
+    try config.set(std.testing.allocator, "adjust-box-thickness", "2");
+    try config.set(std.testing.allocator, "adjust-underline-thickness", "-1");
+    try config.set(std.testing.allocator, "adjust-strikethrough-thickness", "50%");
+    try config.set(std.testing.allocator, "adjust-overline-thickness", "3");
+    try config.set(std.testing.allocator, "adjust-cursor-thickness", "-25%");
+    try std.testing.expectEqual(MetricAdjustments{
+        .box_thickness = .{ .absolute = 2 },
+        .underline_thickness = .{ .absolute = -1 },
+        .strikethrough_thickness = .{ .percent = 50 },
+        .overline_thickness = .{ .absolute = 3 },
+        .cursor_thickness = .{ .percent = -25 },
+    }, config.metric_adjustments);
+    try std.testing.expectError(error.InvalidValue, config.set(std.testing.allocator, "adjust-box-thickness", "1.5"));
 }
 
 test "invalid window padding keeps the previous value" {

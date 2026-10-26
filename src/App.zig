@@ -516,7 +516,7 @@ pub fn init(
         alloc,
         config.font_family,
         font_size_px,
-        config.adjust_cell_height,
+        config.metric_adjustments,
     );
     errdefer font.deinit(alloc);
 
@@ -884,7 +884,7 @@ fn scaleChanged(ctx: *anyopaque, scale120: u32) anyerror!void {
         self.alloc,
         self.config.font_family,
         size_px,
-        self.config.adjust_cell_height,
+        self.config.metric_adjustments,
     );
     self.font.deinit(self.alloc);
     self.font = new_font;
@@ -2638,7 +2638,7 @@ fn applyConfig(self: *App, new_config: Config) !void {
         self.alloc,
         new_config.font_family,
         desired_font_size,
-        new_config.adjust_cell_height,
+        new_config.metric_adjustments,
     );
 
     self.applyColorDefaultsForConfig(new_config);
@@ -2737,7 +2737,7 @@ fn setRuntimeFontSize(self: *App, configured_size: ?Config.FontSize) void {
         self.alloc,
         self.config.font_family,
         size_px,
-        self.config.adjust_cell_height,
+        self.config.metric_adjustments,
     ) catch |err| {
         log.warn("font size change failed: {}", .{err});
         return;
@@ -4806,7 +4806,7 @@ fn createDragIcon(self: *App) !?*DragIcon {
         0 => try drag_preview.text(self.alloc, .{
             .font_family = self.config.font_family,
             .font_size = self.effectiveFontSize(),
-            .adjust_cell_height = self.config.adjust_cell_height,
+            .metric_adjustments = self.config.metric_adjustments,
             .foreground = self.effectiveForeground(),
             .background = self.term.colors.background.get() orelse .{ .r = 0, .g = 0, .b = 0 },
         }, image.data.items, image.width, image.height, image.opacity, scale),

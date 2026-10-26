@@ -110,13 +110,13 @@ pub const Discovery = struct {
     refs: std.atomic.Value(usize),
     family: [:0]u8,
     size_px: f64,
-    adjust_cell_height: ?Config.MetricModifier,
+    adjustments: Config.MetricAdjustments,
     sort_sets: [style_count]*c.FcFontSet,
 
     fn init(
         family: [:0]const u8,
         size_px: f64,
-        adjust_cell_height: ?Config.MetricModifier,
+        adjustments: Config.MetricAdjustments,
     ) Error!*Discovery {
         if (c.FcInit() != c.FcTrue) return error.FontLoadFailed;
 
@@ -141,7 +141,7 @@ pub const Discovery = struct {
             .refs = .init(1),
             .family = family_copy,
             .size_px = size_px,
-            .adjust_cell_height = adjust_cell_height,
+            .adjustments = adjustments,
             .sort_sets = sort_sets,
         };
         return self;
@@ -513,6 +513,11 @@ fn lineThickness(units: i64, y_scale: i64) u32 {
     return @intCast(std.math.divCeil(i64, units * y_scale, 1 << 22) catch unreachable);
 }
 
+fn adjustThickness(natural: u32, modifier: ?Config.MetricModifier) u32 {
+    const m = modifier orelse return natural;
+    return m.apply(@intCast(natural));
+}
+
 const SpriteGlyphKey = struct {
     cp: u21,
     cell_span: u2,
@@ -804,17 +809,17 @@ fn samePatternFace(a: ?*c.FcPattern, b: ?*c.FcPattern) bool {
     return a_index == b_index and std.mem.orderZ(u8, @ptrCast(a_file), @ptrCast(b_file)) == .eq;
 }
 
-/// Load the best match for `family` at `size_px` and optionally adjust its
-/// natural cell height.
+/// Load the best match for `family` at `size_px` and apply `adjustments` to
+/// its natural metrics.
 pub fn init(
     alloc: std.mem.Allocator,
     family: [:0]const u8,
     size_px: f64,
-    adjust_cell_height: ?Config.MetricModifier,
+    adjustments: Config.MetricAdjustments,
 ) Error!Font {
     std.debug.assert(size_px > 0);
 
-    const discovery_data = try Discovery.init(family, size_px, adjust_cell_height);
+    const discovery_data = try Discovery.init(family, size_px, adjustments);
     defer discovery_data.unref();
     return initWithDiscovery(alloc, discovery_data);
 }
@@ -858,11 +863,12 @@ pub fn initWithDiscovery(alloc: std.mem.Allocator, discovery_data: *Discovery) E
     const metrics = primary.ft_face.*.size.*.metrics;
     const natural_height: u31 = @intCast((metrics.ascender - metrics.descender) >> 6);
     const ascender: u31 = @intCast(metrics.ascender >> 6);
-    const cell_height = if (discovery_data.adjust_cell_height) |modifier|
+    const adjustments = discovery_data.adjustments;
+    const cell_height = if (adjustments.cell_height) |modifier|
         modifier.apply(natural_height)
     else
         natural_height;
-    const baseline: u31 = if (discovery_data.adjust_cell_height != null)
+    const baseline: u31 = if (adjustments.cell_height != null)
         @intCast(std.math.clamp(
             @as(i64, ascender) + @divFloor(@as(i64, cell_height) - natural_height, 2),
             0,
@@ -975,15 +981,15 @@ pub fn initWithDiscovery(alloc: std.mem.Allocator, discovery_data: *Discovery) E
         .sprite_metrics = .{
             .cell_width = cell_width,
             .cell_height = cell_height,
-            .box_thickness = thickness,
+            .box_thickness = adjustThickness(thickness, adjustments.box_thickness),
             .underline_position = underline_position,
-            .underline_thickness = thickness,
+            .underline_thickness = adjustThickness(thickness, adjustments.underline_thickness),
             .strikethrough_position = strikethrough_position,
-            .strikethrough_thickness = thickness,
+            .strikethrough_thickness = adjustThickness(thickness, adjustments.strikethrough_thickness),
             .overline_position = 0,
-            .overline_thickness = thickness,
+            .overline_thickness = adjustThickness(thickness, adjustments.overline_thickness),
             .cursor_height = natural_height,
-            .cursor_thickness = thickness,
+            .cursor_thickness = adjustThickness(thickness, adjustments.cursor_thickness),
         },
         .size_px = size_px,
         .cell_width = cell_width,
@@ -1449,7 +1455,7 @@ fn loadFromPattern(
 
 test "load monospace font and rasterize a glyph" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     try std.testing.expect(font.cell_width > 0);
@@ -1466,7 +1472,7 @@ test "load monospace font and rasterize a glyph" {
 
 test "rasterizers share discovery but own face state" {
     const alloc = std.testing.allocator;
-    var first: Font = try .init(alloc, "monospace", 16, null);
+    var first: Font = try .init(alloc, "monospace", 16, .{});
     var first_live = true;
     defer if (first_live) first.deinit(alloc);
     var second: Font = try .initWithDiscovery(alloc, first.discovery());
@@ -1489,7 +1495,7 @@ test "styled primary faces are selected when available" {
     try std.testing.expectEqual(FaceStyle.bold_italic, FaceStyle.init(true, true));
 
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     const bold_idx = font.primary_faces[@intFromEnum(FaceStyle.bold)];
@@ -1499,7 +1505,7 @@ test "styled primary faces are selected when available" {
 
 test "embedded symbols face serves nerd font codepoints" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     const embedded = font.embedded_face orelse return error.SkipZigTest;
@@ -1522,7 +1528,7 @@ test "embedded symbols face serves nerd font codepoints" {
 
 test "alpha symbols do not upscale for double-cell constraints" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     const embedded = font.embedded_face orelse return error.SkipZigTest;
@@ -1542,7 +1548,7 @@ test "alpha symbols do not upscale for double-cell constraints" {
 
 test "alpha symbols fit within single-cell constraints" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     const embedded = font.embedded_face orelse return error.SkipZigTest;
@@ -1561,7 +1567,7 @@ test "alpha symbols fit within single-cell constraints" {
 
 test "fallback face for a codepoint the primary lacks" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     // ASCII stays on the primary face.
@@ -1582,7 +1588,7 @@ test "fallback face for a codepoint the primary lacks" {
 
 test "emoji presentation wins over a covering primary unless VS15 forces text" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "DejaVu Sans Mono", 16, null);
+    var font: Font = try .init(alloc, "DejaVu Sans Mono", 16, .{});
     defer font.deinit(alloc);
 
     const cp: u21 = 0x26A1; // high voltage defaults to emoji
@@ -1609,7 +1615,7 @@ test "emoji presentation wins over a covering primary unless VS15 forces text" {
 
 test "color emoji fallback rasterizes as scaled BGRA" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     const cp: u21 = 0x1F600; // grinning face
@@ -1637,10 +1643,10 @@ test "color emoji fallback rasterizes as scaled BGRA" {
 
 test "cell height adjustment changes metrics and centers the baseline" {
     const alloc = std.testing.allocator;
-    var natural: Font = try .init(alloc, "monospace", 16, null);
+    var natural: Font = try .init(alloc, "monospace", 16, .{});
     defer natural.deinit(alloc);
 
-    var expanded: Font = try .init(alloc, "monospace", 16, .{ .percent = 100 });
+    var expanded: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .percent = 100 } });
     defer expanded.deinit(alloc);
     try std.testing.expectEqual(natural.cell_height * 2, expanded.cell_height);
     try std.testing.expectEqual(natural.cell_width, expanded.cell_width);
@@ -1649,30 +1655,54 @@ test "cell height adjustment changes metrics and centers the baseline" {
         expanded.baseline,
     );
 
-    var tighter: Font = try .init(alloc, "monospace", 16, .{ .absolute = -2 });
+    var tighter: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .absolute = -2 } });
     defer tighter.deinit(alloc);
     try std.testing.expectEqual(natural.cell_height - 2, tighter.cell_height);
     try std.testing.expectEqual(natural.baseline - 1, tighter.baseline);
 
-    var odd_tighter: Font = try .init(alloc, "monospace", 16, .{ .absolute = -1 });
+    var odd_tighter: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .absolute = -1 } });
     defer odd_tighter.deinit(alloc);
     try std.testing.expectEqual(natural.cell_height - 1, odd_tighter.cell_height);
     try std.testing.expectEqual(natural.baseline - 1, odd_tighter.baseline);
 
     // Extreme shrinking remains valid even when natural decoration thickness
     // exceeds the adjusted cell.
-    var minimum: Font = try .init(alloc, "monospace", 16, .{ .percent = -100 });
+    var minimum: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .percent = -100 } });
     defer minimum.deinit(alloc);
     try std.testing.expectEqual(@as(u31, 1), minimum.cell_height);
     try std.testing.expect(minimum.baseline <= minimum.cell_height);
     try std.testing.expect(minimum.multi_row_overhang);
 }
 
+test "thickness adjustments apply per line kind and keep positions" {
+    const alloc = std.testing.allocator;
+    var natural: Font = try .init(alloc, "monospace", 16, .{});
+    defer natural.deinit(alloc);
+    var adjusted: Font = try .init(alloc, "monospace", 16, .{
+        .box_thickness = .{ .absolute = 2 },
+        .underline_thickness = .{ .percent = 200 },
+        .strikethrough_thickness = .{ .absolute = -100 },
+        .cursor_thickness = .{ .absolute = 1 },
+    });
+    defer adjusted.deinit(alloc);
+
+    const base = natural.sprite_metrics;
+    const m = adjusted.sprite_metrics;
+    try std.testing.expectEqual(base.box_thickness + 2, m.box_thickness);
+    try std.testing.expectEqual(base.underline_thickness * 3, m.underline_thickness);
+    try std.testing.expectEqual(@as(u32, 1), m.strikethrough_thickness);
+    try std.testing.expectEqual(base.overline_thickness, m.overline_thickness);
+    try std.testing.expectEqual(base.cursor_thickness + 1, m.cursor_thickness);
+    try std.testing.expectEqual(base.underline_position, m.underline_position);
+    try std.testing.expectEqual(base.strikethrough_position, m.strikethrough_position);
+    try std.testing.expectEqual(natural.cell_height, adjusted.cell_height);
+}
+
 test "fractional sizing preserves the integer terminal grid" {
     const alloc = std.testing.allocator;
-    var integer: Font = try .init(alloc, "monospace", 25, null);
+    var integer: Font = try .init(alloc, "monospace", 25, .{});
     defer integer.deinit(alloc);
-    var fractional: Font = try .init(alloc, "monospace", 25.25, null);
+    var fractional: Font = try .init(alloc, "monospace", 25.25, .{});
     defer fractional.deinit(alloc);
     try std.testing.expectEqual(integer.cell_width, fractional.cell_width);
     try std.testing.expectEqual(integer.cell_height, fractional.cell_height);
@@ -1711,7 +1741,7 @@ test "line thickness rounds fractional pixels up" {
 
 test "phase cache and bearings match direct negative FreeType translation" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 25.25, null);
+    var font: Font = try .init(alloc, "monospace", 25.25, .{});
     defer font.deinit(alloc);
     const glyph_face = font.face(0);
     const idx = c.FT_Get_Char_Index(glyph_face.ft_face, 'j');

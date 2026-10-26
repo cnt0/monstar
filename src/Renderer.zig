@@ -1977,7 +1977,7 @@ test "kitty unscaled blit honors rgba alpha" {
 
 test "kitty placement clips offsets above signed 32-bit range" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2009,7 +2009,7 @@ test "kitty placement clips offsets above signed 32-bit range" {
 
 test "scaled kitty placement reuses cached rgba variant" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2052,7 +2052,7 @@ test "scaled kitty placement reuses cached rgba variant" {
 
 test "scaled kitty cache protects a stable working set of 33 across frames" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2096,7 +2096,7 @@ test "scaled kitty cache protects a stable working set of 33 across frames" {
 
 test "scaled kitty cache evicts only the stale bytes needed" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2172,7 +2172,7 @@ test "emoji keycap grapheme selects emoji fallback face" {
     try testing.expectEqual(@as(u21, '1'), raws[0].content.codepoint.data);
     try testing.expectEqualSlices(u21, &.{ 0xFE0F, 0x20E3 }, graphemes[0]);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     const keycap_face = font.faceForCluster(alloc, &.{ '1', 0xFE0F, 0x20E3 }, .regular);
     if (keycap_face == 0) return error.SkipZigTest;
@@ -2204,7 +2204,7 @@ test "emoji presentation graphemes select emoji fallback face" {
     const alloc = testing.allocator;
     const grinning: u21 = 0x1F600;
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     const emoji_face = font.faceForCodepoint(alloc, grinning);
     if (emoji_face == 0) return error.SkipZigTest;
@@ -2273,7 +2273,7 @@ test "default emoji presentation squares select emoji fallback face" {
     const alloc = testing.allocator;
 
     const grinning: u21 = 0x1F600;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     const emoji_face = font.faceForCodepoint(alloc, grinning);
     if (emoji_face == 0) return error.SkipZigTest;
@@ -2525,7 +2525,7 @@ fn testSpriteOverlay(kind: enum { preedit, search, link }) !void {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2578,7 +2578,7 @@ test "smooth scroll crops text and overscan without touching stride padding" {
     var reference_state: vt.RenderState = .empty;
     defer reference_state.deinit(alloc);
     try reference_state.update(alloc, &reference);
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2633,7 +2633,7 @@ test "render a simple grid" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2668,7 +2668,7 @@ test "cursor splits shaping runs" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2707,7 +2707,7 @@ test "cursor colors resolve from cells unless OSC 12 is set" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{
         .cursor_color = .cell_foreground,
@@ -2744,7 +2744,7 @@ test "focused block cursor keeps natural height in an expanded cell" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, .{ .absolute = 4 });
+    var font: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .absolute = 4 } });
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2774,7 +2774,7 @@ test "cursor fill and glyph helpers follow TerminalColor" {
     const fg: vt.color.RGB = .{ .r = 10, .g = 20, .b = 30 };
     const bg: vt.color.RGB = .{ .r = 40, .g = 50, .b = 60 };
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -2810,7 +2810,7 @@ test "background opacity cells controls explicit cell backgrounds" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{ .background_alpha = 128 });
     defer renderer.deinit();
@@ -2837,7 +2837,7 @@ test "render rectangular selection spans" {
     const alloc = std.testing.allocator;
     const selection_bg: vt.color.RGB = .{ .r = 0x12, .g = 0x34, .b = 0x56 };
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     var term: vt.Terminal = try .init(std.testing.io, alloc, .{ .cols = 8, .rows = 5 });
@@ -2897,7 +2897,7 @@ test "render rectangular selection spans" {
 test "render kitty image placement" {
     const alloc = std.testing.allocator;
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     var term: vt.Terminal = try .init(std.testing.io, alloc, .{ .cols = 4, .rows = 2 });
@@ -2945,7 +2945,7 @@ test "render kitty image placement" {
 test "kitty placement collection uses the current animation frame" {
     const alloc = std.testing.allocator;
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     var term: vt.Terminal = try .init(std.testing.io, alloc, .{ .cols = 4, .rows = 2 });
@@ -2972,7 +2972,7 @@ test "kitty placement collection uses the current animation frame" {
 test "render kitty unicode placeholder placement" {
     const alloc = std.testing.allocator;
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
 
     var term: vt.Terminal = try .init(std.testing.io, alloc, .{ .cols = 4, .rows = 2 });
@@ -3022,7 +3022,7 @@ test "dirty row render matches full render" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 25.25, .{ .absolute = -8 });
+    var font: Font = try .init(alloc, "monospace", 25.25, .{ .cell_height = .{ .absolute = -8 } });
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -3056,7 +3056,7 @@ test "extreme cell height shrinking falls back to full damage" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, .{ .percent = -100 });
+    var font: Font = try .init(alloc, "monospace", 16, .{ .cell_height = .{ .percent = -100 } });
     defer font.deinit(alloc);
     try std.testing.expect(font.multi_row_overhang);
     var renderer: Renderer = try .init(alloc, &font, .{});
@@ -3089,7 +3089,7 @@ test "cell damage render matches full render for sparse row churn" {
 
     var state: vt.RenderState = .empty;
     defer state.deinit(alloc);
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var partial: Renderer = try .init(alloc, &font, .{
         .track_cell_damage = true,
@@ -3141,7 +3141,7 @@ test "cell damage repairs rotating stale buffers" {
     defer stream.deinit();
     var state: vt.RenderState = .empty;
     defer state.deinit(alloc);
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var partial: Renderer = try .init(alloc, &font, .{});
     defer partial.deinit();
@@ -3216,7 +3216,7 @@ test "cell damage clips an adjacent text run to the cleared interval" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var partial: Renderer = try .init(alloc, &font, .{
         .track_cell_damage = true,
@@ -3267,7 +3267,7 @@ test "cell damage redraws symbol ink spilling into the interval" {
         glyph_constraints.constraintWidth(state.row_data.get(0).cells.items(.raw), 5, cols),
     );
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var partial: Renderer = try .init(alloc, &font, .{});
     defer partial.deinit();
@@ -3310,7 +3310,7 @@ test "scroll invalidates newly exposed cell fingerprints" {
     var state: vt.RenderState = .empty;
     defer state.deinit(alloc);
     try state.update(alloc, &term);
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -3353,7 +3353,7 @@ test "cell damage repaints dirty rows after terminal colors change" {
     var state: vt.RenderState = .empty;
     defer state.deinit(alloc);
     try state.update(alloc, &term);
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -3407,7 +3407,7 @@ test "search match uses its own highlight background" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -3446,7 +3446,7 @@ test "unselected search match tints its existing background" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();
@@ -3484,7 +3484,7 @@ test "fractional pen accumulates within clusters and reanchors at grid cells" {
     var state: vt.RenderState = .empty;
     defer state.deinit(alloc);
     try state.update(alloc, &term);
-    var font: Font = try .init(alloc, "monospace", 25.25, null);
+    var font: Font = try .init(alloc, "monospace", 25.25, .{});
     defer font.deinit(alloc);
     var renderer: Renderer = try .init(alloc, &font, .{});
     defer renderer.deinit();

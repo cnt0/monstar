@@ -558,7 +558,7 @@ test "kitty placement dimensions reject unrepresentable geometry" {
 
 test "collect relative kitty placement rooted at a pin" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var terminal: vt.Terminal = try .init(std.testing.io, alloc, .{ .rows = 10, .cols = 10 });
     defer terminal.deinit(alloc);
@@ -606,7 +606,7 @@ test "collect relative kitty placement rooted at a pin" {
 
 test "collect relative kitty placement rooted at virtual placeholders" {
     const alloc = std.testing.allocator;
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var terminal: vt.Terminal = try .init(std.testing.io, alloc, .{ .rows = 5, .cols = 5 });
     defer terminal.deinit(alloc);

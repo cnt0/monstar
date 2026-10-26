@@ -690,7 +690,7 @@ test "unchanged dirty rows report no damage" {
     defer state.deinit(alloc);
     try state.update(alloc, &term);
 
-    var font: Font = try .init(alloc, "monospace", 16, null);
+    var font: Font = try .init(alloc, "monospace", 16, .{});
     defer font.deinit(alloc);
     var raster = try AsyncRaster.init(
         font.discovery(),
@@ -767,7 +767,7 @@ test "primary and alternate screen scroll pixels match full repaint" {
                     var state: vt.RenderState = .empty;
                     defer state.deinit(alloc);
                     try state.update(alloc, &term);
-                    var font: Font = try .init(alloc, "DejaVu Sans Mono", 16, cell_height);
+                    var font: Font = try .init(alloc, "DejaVu Sans Mono", 16, .{ .cell_height = cell_height });
                     defer font.deinit(alloc);
                     var raster = try AsyncRaster.init(font.discovery(), .{ .r = 1, .g = 2, .b = 3 }, null, null, null, 255, false, &state);
                     defer raster.deinit();
