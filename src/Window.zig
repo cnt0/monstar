@@ -1349,7 +1349,7 @@ test "keyboard removal notifies the application without a compositor leave" {
     }
 }
 
-test "seat removal ends text input focus without a compositor leave" {
+test "text input leave disables compositor text input, including on seat removal" {
     const linux = std.os.linux;
     const Observer = struct {
         window: *Window,
@@ -1400,6 +1400,7 @@ test "seat removal ends text input focus without a compositor leave" {
     window.primary_device = null;
     window.clipboard_devices_fn = null;
     window.text_input = try manager.getTextInput(seat);
+    window.text_input.?.setListener(*Window, textInputListener, &window);
     window.text_input_enabled = true;
     window.text_input_rect = .{ .x = 10, .y = 20, .width = 8, .height = 16 };
     window.text_input_fn = Observer.textInput;
@@ -1407,6 +1408,29 @@ test "seat removal ends text input focus without a compositor leave" {
     window.running = true;
     window.pending_scale_changed = false;
     window.pending_draw = false;
+
+    // A compositor leave must reach the compositor as disable + commit, or it
+    // will treat the enable after the next enter as already applied.
+    var wire: [512]u8 align(4) = undefined;
+    try std.testing.expectEqual(.SUCCESS, display.flush());
+    while (@as(isize, @bitCast(linux.read(fds[1], &wire, wire.len))) > 0) {}
+    const text_input_id = window.text_input.?.getId();
+    const leave = [_]u32{ text_input_id, (12 << 16) | 1, surface.getId() };
+    try std.testing.expectEqual(@as(usize, 12), linux.write(fds[1], std.mem.sliceAsBytes(&leave).ptr, 12));
+    try std.testing.expect(try window.dispatch());
+    try std.testing.expectEqual(surface, observer.left_surface);
+    try std.testing.expect(!window.text_input_enabled);
+    try std.testing.expectEqual(.SUCCESS, display.flush());
+    const sent = linux.read(fds[1], &wire, wire.len);
+    try std.testing.expect(@as(isize, @bitCast(sent)) > 0);
+    try std.testing.expectEqualSlices(
+        u32,
+        &.{ text_input_id, (8 << 16) | 2, text_input_id, (8 << 16) | 7 },
+        @alignCast(std.mem.bytesAsSlice(u32, wire[0..sent])),
+    );
+    window.text_input_enabled = true;
+    window.text_input_rect = .{ .x = 10, .y = 20, .width = 8, .height = 16 };
+    observer.left_surface = null;
 
     // Real wl_registry.global_remove events: an unrelated global must leave
     // input intact, and repeated removal must not touch a destroyed proxy.
@@ -1428,8 +1452,13 @@ fn textInputListener(_: *zwp.TextInputV3, event: zwp.TextInputV3.Event, self: *W
         },
         .leave => |leave| {
             if (leave.surface != self.surface) return;
+            // Forward first: the application's disableTextInput must still
+            // see the enabled state, or the compositor never receives the
+            // disable and treats the next enter's enable as already applied.
+            if (self.text_input_fn) |text_input_fn| text_input_fn(self.render_ctx.?, event);
             self.text_input_enabled = false;
             self.text_input_rect = null;
+            return;
         },
         else => {},
     }
