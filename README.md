@@ -253,9 +253,9 @@ state. Middle-click to paste the primary selection.
   opening uses Wayland activation tokens.
 - D-Bus session services provide desktop notifications and launcher progress.
   Notification actions can activate the terminal window.
-- Monstar launches new windows opened with `Ctrl+Shift+N` through the systemd
-  user manager. Optional transient scopes place each shell process tree in a
-  separate scope.
+- Under systemd, Monstar launches new windows opened with `Ctrl+Shift+N`
+  through the systemd user manager; elsewhere it launches them directly.
+  Optional transient scopes place each shell process tree in a separate scope.
 - Wayland protocols provide fractional scaling, text-input-v3 IME, cursor
   shapes, clipboard and primary selection, server-side decorations, named app
   icons, activation, system bell, and translucent background blur support.

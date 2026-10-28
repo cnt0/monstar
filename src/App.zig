@@ -2145,8 +2145,9 @@ fn reloadConfig(self: *App) void {
 }
 
 /// `new_window` (default Ctrl+Shift+N): spawn an independent monstar window
-/// in the shell's current directory through the user service manager so the
-/// new window is not adopted by this monstar's launcher.
+/// in the shell's current directory. Under systemd, launch it through the
+/// user service manager so the new window is not adopted by this monstar's
+/// launcher; otherwise, or when systemd-run fails, launch it directly.
 fn spawnNewWindow(self: *App) void {
     var arena_state: std.heap.ArenaAllocator = .init(self.alloc);
     defer arena_state.deinit();
@@ -2163,9 +2164,37 @@ fn spawnNewWindow(self: *App) void {
     };
     const exe_path = resolveCommandPathZ(arena, self.environ, "monstar", null) catch "monstar";
 
-    self.spawnSystemdRun(arena, envp, exe_path, pwd) catch |err| {
+    if (cgroup.systemdBooted()) {
+        if (self.spawnSystemdRun(arena, envp, exe_path, pwd)) |_| return else |err| {
+            log.warn("systemd-run launch failed ({}); launching directly", .{err});
+        }
+    }
+    spawnWindowDirect(arena, envp, exe_path, pwd) catch |err| {
         log.err("new window launch failed: {}", .{err});
     };
+}
+
+fn spawnWindowDirect(
+    arena: std.mem.Allocator,
+    envp: [*:null]const ?[*:0]const u8,
+    exe_path: [:0]const u8,
+    pwd: ?[:0]const u8,
+) !void {
+    // An unresolved bare name cannot be exec'd; reuse our own binary.
+    const path: [:0]const u8 = if (std.mem.indexOfScalar(u8, exe_path, '/') == null)
+        "/proc/self/exe"
+    else
+        exe_path;
+    var argv: std.ArrayList(?[*:0]const u8) = .empty;
+    try argv.append(arena, exe_path.ptr);
+    // Override any configured working-directory, as the systemd-run path does.
+    if (pwd) |p| {
+        try argv.append(arena, (try std.fmt.allocPrintSentinel(arena, "--working-directory={s}", .{p}, 0)).ptr);
+    }
+    const argv_slice = try argv.toOwnedSliceSentinel(arena, null);
+    if (!spawnDetached(path.ptr, argv_slice.ptr, envp, null, "monstar")) {
+        return error.SpawnFailed;
+    }
 }
 
 fn spawnSystemdRun(
